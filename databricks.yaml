@@ -9,4 +9,4 @@ targets:
     workspace:
       host: https://adb-7405617499680447.7.azuredatabricks.net/
       # This will deploy to /Workspace/Shared/Jenkins/production
-      root_path: /Workspace/Shared/${bundle.name}/${bundle.target}
+      root_path: /Workspace/Shared/${bundle.target}

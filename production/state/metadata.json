@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "config": {
+    "bundle": {
+      "git": {
+        "origin_url": "https://github.com/Vegash09/Jenkins.git",
+        "commit": "8a114770afb294517ed31ba83a2105d903560002",
+        "bundle_root_path": "."
+      }
+    },
+    "workspace": {
+      "file_path": "/Workspace/Shared/Jenkins/production/files"
+    },
+    "resources": {}
+  }
+}
