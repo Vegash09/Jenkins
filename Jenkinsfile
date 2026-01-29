@@ -4,7 +4,7 @@ pipeline {
     parameters {
         choice(
             name: 'DEPLOYMENT_MODE',
-            choices: ['Validate Only', 'Validate and Deploy', 'Deploy Without Validation'],
+            choices: ['Validate Only', 'Validate and Deploy'],
             description: 'Choose the deployment mode'
         )
         booleanParam(
@@ -204,12 +204,6 @@ pipeline {
         }
         
         stage('Validate Databricks Bundle') {
-            when {
-                expression { 
-                    params.DEPLOYMENT_MODE == 'Validate Only' || 
-                    params.DEPLOYMENT_MODE == 'Validate and Deploy' 
-                }
-            }
             steps {
                 script {
                     echo 'Validating Databricks asset bundle...'
@@ -243,9 +237,8 @@ pipeline {
         stage('Approval Gate') {
             when {
                 expression {
-                    // Only require approval if deploying and approval is enabled
-                    (params.DEPLOYMENT_MODE == 'Validate and Deploy' || 
-                     params.DEPLOYMENT_MODE == 'Deploy Without Validation') &&
+                    // Only require approval if "Validate and Deploy" is selected and approval is enabled
+                    params.DEPLOYMENT_MODE == 'Validate and Deploy' &&
                     params.REQUIRE_APPROVAL == true
                 }
             }
@@ -304,9 +297,8 @@ pipeline {
         stage('Deploy Databricks Bundle') {
             when {
                 expression { 
-                    // Deploy if mode is "Validate and Deploy" or "Deploy Without Validation"
-                    (params.DEPLOYMENT_MODE == 'Validate and Deploy' || 
-                     params.DEPLOYMENT_MODE == 'Deploy Without Validation') &&
+                    // Only deploy if "Validate and Deploy" is selected
+                    params.DEPLOYMENT_MODE == 'Validate and Deploy' &&
                     (currentBuild.result == null || currentBuild.result == 'SUCCESS')
                 }
             }
@@ -363,9 +355,8 @@ pipeline {
                 
                 if (params.DEPLOYMENT_MODE == 'Validate Only') {
                     echo '✓ Validation completed - No deployment performed'
-                } else if (params.DEPLOYMENT_MODE == 'Validate and Deploy' || 
-                           params.DEPLOYMENT_MODE == 'Deploy Without Validation') {
-                    echo '✓ Deployment to production completed successfully!'
+                } else if (params.DEPLOYMENT_MODE == 'Validate and Deploy') {
+                    echo '✓ Validation and deployment to production completed successfully!'
                 }
                 echo '=========================================='
             }
