@@ -1,12 +1,15 @@
 bundle:
   name: Jenkins
+  exclude:
+    - "Jenkinsfile"
+    - "backup/**"
+    - "databricks.yml"
+    - "README.md"
 
-# Target environment
 targets:
   production:
     mode: production
     default: true
     workspace:
       host: https://adb-7405617499680447.7.azuredatabricks.net/
-      # This will deploy to /Workspace/Shared/Jenkins/production
       root_path: /Workspace/Shared/${bundle.target}
