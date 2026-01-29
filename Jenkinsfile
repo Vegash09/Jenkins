@@ -1,16 +1,27 @@
 pipeline {
     agent any
     
+    parameters {
+        choice(
+            name: 'DEPLOYMENT_MODE',
+            choices: ['Validate Only', 'Validate and Deploy', 'Deploy Without Validation'],
+            description: 'Choose the deployment mode'
+        )
+        booleanParam(
+            name: 'REQUIRE_APPROVAL',
+            defaultValue: true,
+            description: 'Require manual approval before deployment?'
+        )
+    }
+    
     environment {
-        DATABRICKS_CLIENT_ID = 'e1720236-6ef3-47c5-b73e-700d4a171681'
-        DATABRICKS_CLIENT_SECRET = 'dosed0e6ab7e4b30bb5ba34f5b3971c88456'
-        DATABRICKS_HOST = 'https://adb-7405617499680447.7.azuredatabricks.net/'
         DATABRICKS_BUNDLE_ENV = 'production'
-        BUNDLE_VAR_DATABRICKS_CLIENT_ID = 'e1720236-6ef3-47c5-b73e-700d4a171681'
+        APPROVER_EMAIL = 'vegash.p@diggibyte.com'
     }
     
     options {
         skipDefaultCheckout(false)
+        timeout(time: 1, unit: 'HOURS')
     }
     
     stages {
@@ -18,6 +29,20 @@ pipeline {
             steps {
                 echo 'Checking out code from GitHub repository...'
                 checkout scm
+            }
+        }
+        
+        stage('Display Build Parameters') {
+            steps {
+                script {
+                    echo '=========================================='
+                    echo 'BUILD PARAMETERS'
+                    echo '=========================================='
+                    echo "Deployment Mode: ${params.DEPLOYMENT_MODE}"
+                    echo "Require Approval: ${params.REQUIRE_APPROVAL}"
+                    echo "Approver: ${env.APPROVER_EMAIL}"
+                    echo '=========================================='
+                }
             }
         }
         
@@ -106,6 +131,40 @@ pipeline {
             }
         }
         
+        stage('Configure Databricks Authentication') {
+            steps {
+                script {
+                    echo 'Setting up Databricks authentication...'
+                    withCredentials([
+                        string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
+                    ]) {
+                        powershell '''
+                            $ErrorActionPreference = "Stop"
+                            
+                            Write-Host "Setting Databricks environment variables..."
+                            
+                            # Set environment variables for this session
+                            $env:DATABRICKS_HOST = $env:DATABRICKS_HOST
+                            $env:DATABRICKS_CLIENT_ID = $env:DATABRICKS_CLIENT_ID
+                            $env:DATABRICKS_CLIENT_SECRET = $env:DATABRICKS_CLIENT_SECRET
+                            
+                            Write-Host "DATABRICKS_HOST: $env:DATABRICKS_HOST"
+                            Write-Host "DATABRICKS_CLIENT_ID: $($env:DATABRICKS_CLIENT_ID.Substring(0,8))..." # Show only first 8 chars
+                            Write-Host "Authentication configured successfully!"
+                        '''
+                        
+                        // Store credentials in environment for subsequent stages
+                        env.DATABRICKS_HOST = DATABRICKS_HOST
+                        env.DATABRICKS_CLIENT_ID = DATABRICKS_CLIENT_ID
+                        env.DATABRICKS_CLIENT_SECRET = DATABRICKS_CLIENT_SECRET
+                        env.BUNDLE_VAR_DATABRICKS_CLIENT_ID = DATABRICKS_CLIENT_ID
+                    }
+                }
+            }
+        }
+        
         stage('Ensure Python files are Databricks notebooks') {
             steps {
                 script {
@@ -145,23 +204,99 @@ pipeline {
         }
         
         stage('Validate Databricks Bundle') {
+            when {
+                expression { 
+                    params.DEPLOYMENT_MODE == 'Validate Only' || 
+                    params.DEPLOYMENT_MODE == 'Validate and Deploy' 
+                }
+            }
             steps {
                 script {
                     echo 'Validating Databricks asset bundle...'
-                    bat '''
-                        set PATH=%PATH%;C:\\databricks-cli
-                        
-                        echo.
-                        echo ========================================
-                        echo Running: databricks bundle validate
-                        echo ========================================
-                        echo.
-                        
-                        databricks bundle validate
-                        
-                        echo.
-                        echo Validation completed successfully!
-                    '''
+                    withCredentials([
+                        string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
+                    ]) {
+                        bat """
+                            set PATH=%PATH%;C:\\databricks-cli
+                            set DATABRICKS_HOST=${DATABRICKS_HOST}
+                            set DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                            set DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
+                            
+                            echo.
+                            echo ========================================
+                            echo Running: databricks bundle validate
+                            echo ========================================
+                            echo.
+                            
+                            databricks bundle validate
+                            
+                            echo.
+                            echo Validation completed successfully!
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Approval Gate') {
+            when {
+                expression {
+                    // Only require approval if deploying and approval is enabled
+                    (params.DEPLOYMENT_MODE == 'Validate and Deploy' || 
+                     params.DEPLOYMENT_MODE == 'Deploy Without Validation') &&
+                    params.REQUIRE_APPROVAL == true
+                }
+            }
+            steps {
+                script {
+                    echo '=========================================='
+                    echo 'WAITING FOR DEPLOYMENT APPROVAL'
+                    echo '=========================================='
+                    echo "Approval required from: ${env.APPROVER_EMAIL}"
+                    echo "Build URL: ${env.BUILD_URL}"
+                    echo '=========================================='
+                    
+                    try {
+                        timeout(time: 30, unit: 'MINUTES') {
+                            def approvalInput = input(
+                                id: 'DeployApproval',
+                                message: "Deployment approval required from ${env.APPROVER_EMAIL}. Do you approve deployment to Production?",
+                                parameters: [
+                                    choice(
+                                        name: 'APPROVE_DEPLOY',
+                                        choices: ['Approve', 'Reject'],
+                                        description: 'Approve or Reject the deployment'
+                                    ),
+                                    text(
+                                        name: 'APPROVAL_COMMENT',
+                                        defaultValue: '',
+                                        description: 'Optional: Add a comment about this deployment'
+                                    )
+                                ],
+                                submitter: 'vegash.p@diggibyte.com',
+                                submitterParameter: 'APPROVED_BY'
+                            )
+                            
+                            if (approvalInput.APPROVE_DEPLOY == 'Reject') {
+                                error("Deployment rejected by ${approvalInput.APPROVED_BY}")
+                            }
+                            
+                            echo '=========================================='
+                            echo "✓ Deployment APPROVED by: ${approvalInput.APPROVED_BY}"
+                            if (approvalInput.APPROVAL_COMMENT) {
+                                echo "Comment: ${approvalInput.APPROVAL_COMMENT}"
+                            }
+                            echo '=========================================='
+                        }
+                    } catch (err) {
+                        echo '=========================================='
+                        echo "✗ Deployment REJECTED or TIMEOUT"
+                        echo "Reason: ${err.message}"
+                        echo '=========================================='
+                        error("Deployment aborted: ${err.message}")
+                    }
                 }
             }
         }
@@ -169,26 +304,39 @@ pipeline {
         stage('Deploy Databricks Bundle') {
             when {
                 expression { 
-                    currentBuild.result == null || currentBuild.result == 'SUCCESS' 
+                    // Deploy if mode is "Validate and Deploy" or "Deploy Without Validation"
+                    (params.DEPLOYMENT_MODE == 'Validate and Deploy' || 
+                     params.DEPLOYMENT_MODE == 'Deploy Without Validation') &&
+                    (currentBuild.result == null || currentBuild.result == 'SUCCESS')
                 }
             }
             steps {
                 script {
                     echo 'Deploying Databricks asset bundle...'
-                    bat '''
-                        set PATH=%PATH%;C:\\databricks-cli
-                        
-                        echo.
-                        echo ========================================
-                        echo Running: databricks bundle deploy
-                        echo ========================================
-                        echo.
-                        
-                        databricks bundle deploy
-                        
-                        echo.
-                        echo Deployment completed successfully!
-                    '''
+                    withCredentials([
+                        string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
+                    ]) {
+                        bat """
+                            set PATH=%PATH%;C:\\databricks-cli
+                            set DATABRICKS_HOST=${DATABRICKS_HOST}
+                            set DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                            set DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
+                            set BUNDLE_VAR_DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                            
+                            echo.
+                            echo ========================================
+                            echo Running: databricks bundle deploy
+                            echo ========================================
+                            echo.
+                            
+                            databricks bundle deploy
+                            
+                            echo.
+                            echo Deployment completed successfully!
+                        """
+                    }
                 }
             }
         }
@@ -196,14 +344,41 @@ pipeline {
     
     post {
         failure {
-            echo '=========================================='
-            echo 'Pipeline FAILED!'
-            echo '=========================================='
+            script {
+                echo '=========================================='
+                echo '✗ Pipeline FAILED!'
+                echo '=========================================='
+                echo "Failed Stage: ${env.STAGE_NAME}"
+                echo "Build URL: ${env.BUILD_URL}"
+                echo "Contact: ${env.APPROVER_EMAIL}"
+                echo '=========================================='
+            }
         }
         success {
-            echo '=========================================='
-            echo 'Pipeline completed SUCCESSFULLY!'
-            echo '=========================================='
+            script {
+                echo '=========================================='
+                echo '✓ Pipeline completed SUCCESSFULLY!'
+                echo '=========================================='
+                echo "Deployment Mode: ${params.DEPLOYMENT_MODE}"
+                
+                if (params.DEPLOYMENT_MODE == 'Validate Only') {
+                    echo '✓ Validation completed - No deployment performed'
+                } else if (params.DEPLOYMENT_MODE == 'Validate and Deploy' || 
+                           params.DEPLOYMENT_MODE == 'Deploy Without Validation') {
+                    echo '✓ Deployment to production completed successfully!'
+                }
+                echo '=========================================='
+            }
+        }
+        aborted {
+            script {
+                echo '=========================================='
+                echo '⚠ Pipeline was ABORTED!'
+                echo '=========================================='
+                echo 'Deployment was cancelled or timed out'
+                echo "Contact: ${env.APPROVER_EMAIL} for more information"
+                echo '=========================================='
+            }
         }
         always {
             echo 'Cleaning up workspace...'
