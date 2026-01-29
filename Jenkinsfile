@@ -7,7 +7,6 @@ pipeline {
         DATABRICKS_HOST = 'https://adb-7405617499680447.7.azuredatabricks.net/'
         DATABRICKS_BUNDLE_ENV = 'production'
         BUNDLE_VAR_DATABRICKS_CLIENT_ID = 'e1720236-6ef3-47c5-b73e-700d4a171681'
-        DATABRICKS_CLI_PATH = 'C:\\databricks-cli'
     }
     
     options {
@@ -27,46 +26,78 @@ pipeline {
                 script {
                     echo 'Downloading and installing Databricks CLI...'
                     powershell '''
+                        $ErrorActionPreference = "Stop"
+                        
                         $cliPath = "C:\\databricks-cli"
                         $cliExe = "$cliPath\\databricks.exe"
                         
-                        # Create directory if it doesn't exist
+                        # Create directory
                         if (!(Test-Path $cliPath)) {
                             New-Item -ItemType Directory -Path $cliPath -Force | Out-Null
                             Write-Host "Created directory: $cliPath"
                         }
                         
-                        # Check if CLI already exists
+                        # Check if already installed
                         if (Test-Path $cliExe) {
-                            Write-Host "Databricks CLI already installed at: $cliExe"
+                            Write-Host "Databricks CLI already exists!"
                             & $cliExe version
-                        } else {
-                            Write-Host "Downloading Databricks CLI..."
+                            exit 0
+                        }
+                        
+                        Write-Host "Downloading Databricks CLI..."
+                        
+                        # Use the correct URL format
+                        $version = "v0.234.0"  # Using a stable version
+                        $downloadUrl = "https://github.com/databricks/cli/releases/download/$version/databricks_cli_${version}_windows_amd64.zip"
+                        $zipFile = "$env:TEMP\\databricks_cli.zip"
+                        
+                        Write-Host "Download URL: $downloadUrl"
+                        
+                        try {
+                            # Download with progress
+                            $ProgressPreference = 'SilentlyContinue'
+                            Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
+                            Write-Host "Downloaded successfully!"
                             
-                            # Download the latest Windows CLI
-                            $downloadUrl = "https://github.com/databricks/cli/releases/latest/download/databricks_cli_windows_amd64.zip"
-                            $zipFile = "$env:TEMP\\databricks_cli.zip"
+                            # Extract
+                            Write-Host "Extracting..."
+                            Expand-Archive -Path $zipFile -DestinationPath $cliPath -Force
+                            
+                            # Verify extraction
+                            if (Test-Path $cliExe) {
+                                Write-Host "Installation successful!"
+                                & $cliExe version
+                            } else {
+                                Write-Host "ERROR: databricks.exe not found after extraction!"
+                                Write-Host "Contents of $cliPath :"
+                                Get-ChildItem $cliPath | Format-Table Name
+                                exit 1
+                            }
+                            
+                            # Cleanup
+                            Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+                            
+                        } catch {
+                            Write-Host "ERROR: $_"
+                            Write-Host "Failed URL: $downloadUrl"
+                            
+                            # Try alternate method - download latest directly
+                            Write-Host "`nTrying alternate download method..."
                             
                             try {
-                                Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
-                                Write-Host "Downloaded CLI to: $zipFile"
-                                
-                                # Extract
-                                Write-Host "Extracting CLI..."
+                                # Download databricks.exe directly without version
+                                $altUrl = "https://github.com/databricks/cli/releases/download/v0.234.0/databricks_cli_0.234.0_windows_amd64.zip"
+                                Invoke-WebRequest -Uri $altUrl -OutFile $zipFile -UseBasicParsing
                                 Expand-Archive -Path $zipFile -DestinationPath $cliPath -Force
                                 
-                                # Verify
                                 if (Test-Path $cliExe) {
-                                    Write-Host "Successfully installed Databricks CLI!"
+                                    Write-Host "Alternate download successful!"
                                     & $cliExe version
                                 } else {
-                                    throw "CLI executable not found after extraction"
+                                    throw "Still could not find databricks.exe"
                                 }
-                                
-                                # Cleanup
-                                Remove-Item $zipFile -Force
                             } catch {
-                                Write-Error "Failed to install Databricks CLI: $_"
+                                Write-Host "ERROR: Alternate method also failed: $_"
                                 exit 1
                             }
                         }
@@ -93,13 +124,13 @@ pipeline {
                             try {
                                 $content = Get-Content $file -Raw -ErrorAction Stop
                                 
-                                if ($content -notmatch "^# Databricks notebook source") {
+                                if ($content -and $content -notmatch "^# Databricks notebook source") {
                                     $newContent = "$header`n$content"
                                     Set-Content -Path $file -Value $newContent -NoNewline
-                                    Write-Host "  Added header to: $($_.Name)" -ForegroundColor Green
+                                    Write-Host "  Added header" -ForegroundColor Green
                                     $processedCount++
                                 } else {
-                                    Write-Host "  Header already exists, skipped" -ForegroundColor Yellow
+                                    Write-Host "  Already has header" -ForegroundColor Yellow
                                     $skippedCount++
                                 }
                             } catch {
@@ -129,9 +160,7 @@ pipeline {
                         databricks bundle validate
                         
                         echo.
-                        echo ========================================
                         echo Validation completed successfully!
-                        echo ========================================
                     '''
                 }
             }
@@ -158,9 +187,7 @@ pipeline {
                         databricks bundle deploy
                         
                         echo.
-                        echo ========================================
                         echo Deployment completed successfully!
-                        echo ========================================
                     '''
                 }
             }
@@ -172,13 +199,11 @@ pipeline {
             echo '=========================================='
             echo 'Pipeline FAILED!'
             echo '=========================================='
-            echo 'Check the console output above for errors.'
         }
         success {
             echo '=========================================='
             echo 'Pipeline completed SUCCESSFULLY!'
             echo '=========================================='
-            echo 'Your Databricks bundle has been deployed.'
         }
         always {
             echo 'Cleaning up workspace...'
