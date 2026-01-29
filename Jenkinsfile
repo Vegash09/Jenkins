@@ -1,14 +1,12 @@
 pipeline {
-    agent {
-        label 'linux' // Use a Linux agent
-    }
+    agent any  // Changed from 'label: linux' to 'any' - will use any available agent
     
     environment {
         // Hard-coded credentials (NOT RECOMMENDED for production)
         DATABRICKS_CLIENT_ID = 'e1720236-6ef3-47c5-b73e-700d4a171681'
         DATABRICKS_CLIENT_SECRET = 'dosed0e6ab7e4b30bb5ba34f5b3971c88456'
         DATABRICKS_HOST = 'https://adb-7405617499680447.7.azuredatabricks.net/'
-        DATABRICKS_BUNDLE_ENV = 'production' // Set your environment name
+        DATABRICKS_BUNDLE_ENV = 'production'
         BUNDLE_VAR_DATABRICKS_CLIENT_ID = 'e1720236-6ef3-47c5-b73e-700d4a171681'
     }
     
@@ -44,19 +42,13 @@ pipeline {
                 script {
                     echo 'Prepending Databricks notebook header to all .py files...'
                     sh '''
-                        # Install PowerShell on Ubuntu if not already installed
-                        if ! command -v pwsh &> /dev/null; then
-                            echo "Installing PowerShell..."
-                            apt-get update
-                            apt-get install -y wget apt-transport-https software-properties-common
-                            wget -q "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
-                            dpkg -i packages-microsoft-prod.deb
-                            apt-get update
-                            apt-get install -y powershell
-                        fi
-                        
-                        # Use PowerShell to prepend '# Databricks notebook source' to all .py files
-                        pwsh -Command "Get-ChildItem -Path '${WORKSPACE}' -Filter '*.py' -Recurse | ForEach-Object { ('# Databricks notebook source`n' + (Get-Content \\$_.FullName -Raw)) | Set-Content \\$_.FullName }"
+                        # Find all .py files and prepend the Databricks notebook header
+                        find ${WORKSPACE} -type f -name "*.py" | while read file; do
+                            if ! grep -q "# Databricks notebook source" "$file"; then
+                                echo "Processing: $file"
+                                echo "# Databricks notebook source" | cat - "$file" > temp && mv temp "$file"
+                            fi
+                        done
                     '''
                 }
             }
