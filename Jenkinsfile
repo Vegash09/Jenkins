@@ -82,64 +82,61 @@ pipeline {
         }
         
         stage('Generate databricks.yaml') {
-            steps {
-                script {
-                    echo 'Creating databricks.yaml from configuration files...'
-                    bat '''
-                        @echo off
-                        setlocal enabledelayedexpansion
-                        
-                        echo Generating databricks.yaml...
-                        
-                        (
-                            echo bundle:
-                            echo   name: Deal Share Project
-                            echo.
-                            echo include:
-                            echo   - "config/jobs.yml"
-                            echo   - "config/pipelines.yml"
-                            echo.
-                            echo targets:
-                            echo   production:
-                            echo     mode: production
-                            echo     default: true
-                            echo     workspace:
-                            echo       host: %DATABRICKS_HOST_URL%
-                            echo       root_path: /Workspace/Shared/$${bundle.target}
-                            echo.
-                            echo     variables:
-                            echo       databricks_sp_name: "jenkins-deployment-sp"
-                        ) > databricks.yaml
-                        
-                        echo.
-                        echo ========================================
-                        echo Generated databricks.yaml:
-                        echo ========================================
-                        type databricks.yaml
-                        echo.
-                        echo ========================================
-                        
-                        echo Verifying config files exist...
-                        if exist "config\\jobs.yml" (
-                            echo ✓ config\\jobs.yml found
-                        ) else (
-                            echo ✗ config\\jobs.yml NOT found!
-                            exit /b 1
-                        )
-                        
-                        if exist "config\\pipelines.yml" (
-                            echo ✓ config\\pipelines.yml found
-                        ) else (
-                            echo ✗ config\\pipelines.yml NOT found!
-                            exit /b 1
-                        )
-                        
-                        echo.
-                        echo databricks.yaml generated successfully!
-                    '''
-                }
-            }
+    steps {
+        script {
+            echo 'Creating databricks.yaml from configuration files...'
+            bat '''
+                @echo off
+                setlocal enabledelayedexpansion
+                
+                echo Generating databricks.yaml...
+                
+                (
+                    echo bundle:
+                    echo   name: Deal Share Project
+                    echo.
+                    echo include:
+                    echo   - "config/jobs.yml"
+                    echo   - "config/pipelines.yml"
+                    echo.
+                    echo targets:
+                    echo   production:
+                    echo     mode: production
+                    echo     default: true
+                    echo     workspace:
+                    echo       host: %DATABRICKS_HOST_URL%
+                    echo       root_path: /Workspace/Shared/$${bundle.target}
+                ) > databricks.yaml
+                
+                echo.
+                echo ========================================
+                echo Generated databricks.yaml:
+                echo ========================================
+                type databricks.yaml
+                echo.
+                echo ========================================
+                
+                echo Verifying config files exist...
+                if exist "config\\jobs.yml" (
+                    echo ✓ config\\jobs.yml found
+                ) else (
+                    echo ✗ config\\jobs.yml NOT found!
+                    exit /b 1
+                )
+                
+                if exist "config\\pipelines.yml" (
+                    echo ✓ config\\pipelines.yml found
+                ) else (
+                    echo ✗ config\\pipelines.yml NOT found!
+                    exit /b 1
+                )
+                
+                echo.
+                echo databricks.yaml generated successfully!
+            '''
         }
+    }
+}
         
         stage('Configure Databricks Authentication') {
             steps {
