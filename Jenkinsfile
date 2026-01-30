@@ -16,22 +16,34 @@ pipeline {
     }
 
     stage('Install Databricks CLI (Go)') {
-      steps {
+    steps {
         powershell '''
-          $ErrorActionPreference = "Stop"
+            $ErrorActionPreference = "Stop"
 
-          try {
+            Write-Host "Downloading Databricks Go CLI..."
+
+            $cliUrl = "https://github.com/databricks/cli/releases/latest/download/databricks_windows_amd64.zip"
+            $zipPath = "$env:WORKSPACE\\databricks_cli.zip"
+            $extractPath = "$env:WORKSPACE\\databricks_cli"
+
+            Invoke-WebRequest -Uri $cliUrl -OutFile $zipPath
+
+            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+
+            $exePath = Join-Path $extractPath "databricks.exe"
+
+            if (-Not (Test-Path $exePath)) {
+                Write-Error "Databricks CLI not found after extraction!"
+            }
+
+            # Add CLI to PATH for this job
+            $env:Path = "$env:Path;$extractPath"
+            [System.Environment]::SetEnvironmentVariable("PATH", $env:Path, "Process")
+
             databricks -v
-            Write-Host "Databricks CLI already installed."
-          } catch {
-            Write-Host "Installing Databricks CLI via Chocolatey..."
-            choco install databricks -y --no-progress
-            $env:Path = "$env:Path;C:\\ProgramData\\chocolatey\\bin"
-            databricks -v
-          }
         '''
-      }
     }
+}
 
     stage('Configure Databricks Auth (Service Principal OAuth M2M)') {
       steps {
