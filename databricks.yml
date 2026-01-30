@@ -1,0 +1,35 @@
+bundle:
+  name: Deal Share Project
+  include:
+    - "pipelines/*.yml"
+    - "pipelines/*.yaml"
+    - "jobs/*.yml"
+    - "jobs/*.yaml"
+    - "src/**"
+  exclude:
+    - "Jenkinsfile"
+    - "backup/**"
+    - "README.md"
+
+targets:
+  production:
+    mode: production
+    default: true
+    workspace:
+      host: https://dbc-a8b738a8-498f.cloud.databricks.com/
+      root_path: /Workspace/Shared/${bundle.target}
+    permissions:
+      - group_name: DataEngineer
+        level: CAN_MANAGE
+
+# Declare resources that should be deployed
+resources:
+  pipelines:
+    # Example pipeline picked from pipelines/ folder
+    my_pipeline:
+      definition_file: pipelines/my_pipeline.yml
+
+  jobs:
+    # Example job picked from jobs/ folder
+    daily_job:
+      definition_file: jobs/daily_job.yml

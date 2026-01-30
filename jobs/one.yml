@@ -1,9 +1,9 @@
 resources:
   jobs:
-    Job:
-      name: Job
+    vegas:
+      name: vegas
       tasks:
-        - task_key: Task
+        - task_key: Vegash
           notebook_task:
             notebook_path: /Workspace/Shared/Jenkins/notebooks/NoteBook
             source: WORKSPACE
