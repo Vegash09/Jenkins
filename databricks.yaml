@@ -1,8 +1,11 @@
 bundle:
   name: Deal Share Project
   include:
-    - "pipelines/*.yml"
-    - "pipelines/*.yaml"
+  - "pipelines/**/*.yml"
+  - "pipelines/**/*.yaml"
+  - "jobs/**/*.yml"
+  - "jobs/**/*.yaml"
+
   exclude:
     - "Jenkinsfile"
     - "backup/**"
