@@ -1,0 +1,12 @@
+resources:
+  jobs:
+    Job_One:
+      name: Job_One
+      tasks:
+        - task_key: Task_One
+          notebook_task:
+            notebook_path: /Workspace/Shared/Jenkins/notebooks/NoteBook
+            source: WORKSPACE
+      queue:
+        enabled: true
+      performance_target: PERFORMANCE_OPTIMIZED
