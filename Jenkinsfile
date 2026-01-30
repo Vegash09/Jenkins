@@ -82,48 +82,49 @@ pipeline {
         }
         
         stage('Generate databricks.yaml') {
-            steps {
-                script {
-                    echo 'Creating databricks.yaml from configuration files...'
-                    bat '''
-                        @echo off
-                        
-                        echo Generating databricks.yaml...
-                        
-                        (
-                            echo bundle:
-                            echo   name: Deal Share Project
-                            echo.
-                            echo include:
-                            echo   - "config/*.yml"
-                            echo   - "config/*.yaml"
-                            echo.
-                            echo targets:
-                            echo   production:
-                            echo     mode: production
-                            echo     default: true
-                            echo     workspace:
-                            echo       host: %DATABRICKS_HOST_URL%
-                            echo       root_path: /Workspace/Shared/$${bundle.target}
-                        ) > databricks.yaml
-                        
-                        echo.
-                        echo ========================================
-                        echo Generated databricks.yaml:
-                        echo ========================================
-                        type databricks.yaml
-                        echo.
-                        echo ========================================
-                        
-                        echo Listing all config files that will be included:
-                        dir /b config\*.yml config\*.yaml 2>nul
-                        
-                        echo.
-                        echo databricks.yaml generated successfully!
-                    '''
-                }
-            }
+    steps {
+        script {
+            echo 'Creating databricks.yaml from configuration files...'
+            bat '''
+                @echo off
+                
+                echo Generating databricks.yaml...
+                
+                (
+                    echo bundle:
+                    echo   name: Deal Share Project
+                    echo.
+                    echo include:
+                    echo   - "config/**/*.yml"
+                    echo   - "config/**/*.yaml"
+                    echo.
+                    echo targets:
+                    echo   production:
+                    echo     mode: production
+                    echo     default: true
+                    echo     workspace:
+                    echo       host: %DATABRICKS_HOST_URL%
+                    echo       root_path: /Workspace/Shared/$${bundle.target}
+                ) > databricks.yaml
+                
+                echo.
+                echo ========================================
+                echo Generated databricks.yaml:
+                echo ========================================
+                type databricks.yaml
+                echo.
+                echo ========================================
+                
+                echo.
+                echo Listing all YAML files recursively:
+                dir /s /b config\\*.yml config\\*.yaml 2>nul
+                
+                echo.
+                echo databricks.yaml generated successfully!
+            '''
         }
+    }
+}
         
         stage('Configure Databricks Authentication') {
             steps {
