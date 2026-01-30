@@ -4,6 +4,7 @@ pipeline {
     environment {
         DATABRICKS_BUNDLE_ENV = 'production'
         DATABRICKS_CLI_PATH = "${WORKSPACE}\\.databricks-cli"
+        DATABRICKS_HOST_URL = 'https://adb-7405617499680447.7.azuredatabricks.net'
     }
     
     options {
@@ -29,13 +30,11 @@ pipeline {
                         set "CLI_PATH=%DATABRICKS_CLI_PATH%"
                         set "CLI_EXE=%CLI_PATH%\\databricks.exe"
                         
-                        REM Create directory if it doesn't exist
                         if not exist "%CLI_PATH%" (
                             mkdir "%CLI_PATH%"
                             echo Created directory: %CLI_PATH%
                         )
                         
-                        REM Check if already installed
                         if exist "%CLI_EXE%" (
                             echo Databricks CLI already exists!
                             "%CLI_EXE%" version
@@ -70,7 +69,6 @@ pipeline {
                             "%CLI_EXE%" version
                         ) else (
                             echo ERROR: databricks.exe not found after extraction!
-                            echo Contents of %CLI_PATH%:
                             dir "%CLI_PATH%"
                             exit /b 1
                         )
@@ -78,6 +76,66 @@ pipeline {
                         if exist "%ZIP_FILE%" del "%ZIP_FILE%"
                         
                         echo Setup complete!
+                    '''
+                }
+            }
+        }
+        
+        stage('Generate databricks.yaml') {
+            steps {
+                script {
+                    echo 'Creating databricks.yaml from configuration files...'
+                    bat '''
+                        @echo off
+                        setlocal enabledelayedexpansion
+                        
+                        echo Generating databricks.yaml...
+                        
+                        (
+                            echo bundle:
+                            echo   name: Deal Share Project
+                            echo.
+                            echo include:
+                            echo   - "config/jobs.yml"
+                            echo   - "config/pipelines.yml"
+                            echo.
+                            echo targets:
+                            echo   production:
+                            echo     mode: production
+                            echo     default: true
+                            echo     workspace:
+                            echo       host: %DATABRICKS_HOST_URL%
+                            echo       root_path: /Workspace/Shared/$${bundle.target}
+                            echo.
+                            echo     variables:
+                            echo       databricks_sp_name: "jenkins-deployment-sp"
+                        ) > databricks.yaml
+                        
+                        echo.
+                        echo ========================================
+                        echo Generated databricks.yaml:
+                        echo ========================================
+                        type databricks.yaml
+                        echo.
+                        echo ========================================
+                        
+                        echo Verifying config files exist...
+                        if exist "config\\jobs.yml" (
+                            echo ✓ config\\jobs.yml found
+                        ) else (
+                            echo ✗ config\\jobs.yml NOT found!
+                            exit /b 1
+                        )
+                        
+                        if exist "config\\pipelines.yml" (
+                            echo ✓ config\\pipelines.yml found
+                        ) else (
+                            echo ✗ config\\pipelines.yml NOT found!
+                            exit /b 1
+                        )
+                        
+                        echo.
+                        echo databricks.yaml generated successfully!
                     '''
                 }
             }
@@ -126,6 +184,11 @@ pipeline {
                         
                         echo Scanning for Python files in: %WORKSPACE%\\notebooks
                         
+                        if not exist "%WORKSPACE%\\notebooks" (
+                            echo WARNING: notebooks folder not found!
+                            exit /b 0
+                        )
+                        
                         for /r "%WORKSPACE%\\notebooks" %%f in (*.py) do (
                             echo Found: %%~nxf
                             
@@ -167,7 +230,7 @@ pipeline {
                             
                             echo.
                             echo ========================================
-                            echo Running: databricks bundle validate
+                            echo Validating Bundle Configuration
                             echo ========================================
                             echo.
                             
@@ -191,15 +254,10 @@ pipeline {
             }
         }
         
-        stage('Deploy Databricks Bundle') {
-            when {
-                expression { 
-                    currentBuild.result == null || currentBuild.result == 'SUCCESS' 
-                }
-            }
+        stage('Show Deployment Plan') {
             steps {
                 script {
-                    echo 'Deploying Databricks asset bundle (Notebooks + Jobs + Pipelines)...'
+                    echo 'Showing what will be deployed...'
                     withCredentials([
                         string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
@@ -214,7 +272,46 @@ pipeline {
                             
                             echo.
                             echo ========================================
-                            echo Running: databricks bundle deploy
+                            echo Deployment Plan
+                            echo ========================================
+                            echo.
+                            echo The following resources will be deployed:
+                            echo.
+                            
+                            databricks bundle summary -t production
+                            
+                            echo.
+                            echo ========================================
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy Databricks Bundle') {
+            when {
+                expression { 
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS' 
+                }
+            }
+            steps {
+                script {
+                    echo 'Deploying Databricks bundle to production...'
+                    withCredentials([
+                        string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
+                    ]) {
+                        bat """
+                            @echo off
+                            set "PATH=%PATH%;%DATABRICKS_CLI_PATH%"
+                            set "DATABRICKS_HOST=%DATABRICKS_HOST%"
+                            set "DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%"
+                            set "DATABRICKS_CLIENT_SECRET=%DATABRICKS_CLIENT_SECRET%"
+                            
+                            echo.
+                            echo ========================================
+                            echo Deploying to Production
                             echo ========================================
                             echo.
                             
@@ -226,15 +323,52 @@ pipeline {
                             
                             echo.
                             echo ========================================
-                            echo Deployment Summary
+                            echo Deployment Completed Successfully!
                             echo ========================================
                             echo.
                             echo Deployed Resources:
-                            echo - Notebooks: Synced to workspace
-                            echo - Jobs: Created/Updated
-                            echo - Pipelines: Created/Updated
+                            echo   ✓ Notebooks synced to workspace
+                            echo   ✓ Jobs created/updated
+                            echo   ✓ Pipelines created/updated
                             echo.
-                            echo Deployment completed successfully!
+                            echo Location: /Workspace/Shared/production
+                            echo.
+                        """
+                    }
+                }
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    echo 'Verifying deployed resources...'
+                    withCredentials([
+                        string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
+                    ]) {
+                        bat """
+                            @echo off
+                            set "PATH=%PATH%;%DATABRICKS_CLI_PATH%"
+                            set "DATABRICKS_HOST=%DATABRICKS_HOST%"
+                            set "DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%"
+                            set "DATABRICKS_CLIENT_SECRET=%DATABRICKS_CLIENT_SECRET%"
+                            
+                            echo.
+                            echo ========================================
+                            echo Verifying Deployed Jobs
+                            echo ========================================
+                            databricks jobs list --output table
+                            
+                            echo.
+                            echo ========================================
+                            echo Verifying Deployed Pipelines
+                            echo ========================================
+                            databricks pipelines list --output table
+                            
+                            echo.
+                            echo Verification complete!
                         """
                     }
                 }
@@ -245,21 +379,32 @@ pipeline {
     post {
         failure {
             echo '=========================================='
-            echo 'Pipeline FAILED!'
+            echo '❌ Pipeline FAILED!'
             echo 'Check logs above for errors'
             echo '=========================================='
         }
         success {
             echo '=========================================='
-            echo 'Pipeline completed SUCCESSFULLY!'
-            echo 'All resources deployed to production:'
+            echo '✅ Pipeline completed SUCCESSFULLY!'
+            echo ''
+            echo 'Deployed to Production:'
             echo '  ✓ Notebooks'
             echo '  ✓ Jobs'
             echo '  ✓ Pipelines'
+            echo ''
+            echo 'Workspace: /Workspace/Shared/production'
             echo '=========================================='
         }
         always {
             echo 'Cleaning up workspace...'
+            // Keep databricks.yaml for debugging if needed
+            bat '''
+                @echo off
+                if exist databricks.yaml (
+                    echo Archiving databricks.yaml...
+                    copy databricks.yaml databricks.yaml.last
+                )
+            '''
             cleanWs()
         }
     }
