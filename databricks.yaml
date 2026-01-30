@@ -1,16 +1,9 @@
 bundle:
   name: Deal Share Project
-  include:
-  - "pipelines/**/*.yml"
-  - "pipelines/**/*.yaml"
-  - "jobs/**/*.yml"
-  - "jobs/**/*.yaml"
 
-  exclude:
-    - "Jenkinsfile"
-    - "backup/**"
-    - "databricks.yml"
-    - "README.md"
+include:
+  - "resources/*.yml"
+  - "resources/*.yaml"
 
 targets:
   production:
@@ -19,4 +12,3 @@ targets:
     workspace:
       host: https://adb-7405617499680447.7.azuredatabricks.net
       root_path: /Workspace/Shared/${bundle.target}
-

@@ -44,7 +44,6 @@ pipeline {
                         
                         echo Downloading Databricks CLI...
                         
-                        REM Use the correct URL format for Windows
                         set "VERSION=v0.234.0"
                         set "VERSION_NUM=0.234.0"
                         set "DOWNLOAD_URL=https://github.com/databricks/cli/releases/download/%VERSION%/databricks_cli_%VERSION_NUM%_windows_amd64.zip"
@@ -52,7 +51,6 @@ pipeline {
                         
                         echo Download URL: %DOWNLOAD_URL%
                         
-                        REM Download using curl (available in Windows 10+)
                         curl -L "%DOWNLOAD_URL%" -o "%ZIP_FILE%"
                         if errorlevel 1 (
                             echo ERROR: Download failed!
@@ -60,7 +58,6 @@ pipeline {
                         )
                         echo Downloaded successfully!
                         
-                        REM Extract using PowerShell
                         echo Extracting...
                         powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%CLI_PATH%' -Force"
                         if errorlevel 1 (
@@ -68,7 +65,6 @@ pipeline {
                             exit /b 1
                         )
                         
-                        REM Verify extraction
                         if exist "%CLI_EXE%" (
                             echo Installation successful!
                             "%CLI_EXE%" version
@@ -79,7 +75,6 @@ pipeline {
                             exit /b 1
                         )
                         
-                        REM Cleanup
                         if exist "%ZIP_FILE%" del "%ZIP_FILE%"
                         
                         echo Setup complete!
@@ -100,11 +95,8 @@ pipeline {
                         bat '''
                             @echo off
                             echo Setting Databricks environment variables...
-                            
-                            REM Verify credentials are set
                             echo DATABRICKS_HOST: %DATABRICKS_HOST%
                             
-                            REM Show only first 8 chars of client ID
                             set "CLIENT_ID=%DATABRICKS_CLIENT_ID%"
                             set "CLIENT_ID_PREVIEW=%CLIENT_ID:~0,8%"
                             echo DATABRICKS_CLIENT_ID: %CLIENT_ID_PREVIEW%...
@@ -112,11 +104,9 @@ pipeline {
                             echo Authentication configured successfully!
                         '''
                         
-                        // Store credentials in environment for subsequent stages
                         env.DATABRICKS_HOST = DATABRICKS_HOST
                         env.DATABRICKS_CLIENT_ID = DATABRICKS_CLIENT_ID
                         env.DATABRICKS_CLIENT_SECRET = DATABRICKS_CLIENT_SECRET
-                        env.BUNDLE_VAR_DATABRICKS_CLIENT_ID = DATABRICKS_CLIENT_ID
                     }
                 }
             }
@@ -134,19 +124,16 @@ pipeline {
                         set /a PROCESSED_COUNT=0
                         set /a SKIPPED_COUNT=0
                         
-                        echo Scanning for Python files in: %WORKSPACE%
+                        echo Scanning for Python files in: %WORKSPACE%\\notebooks
                         
-                        REM Find all .py files
-                        for /r "%WORKSPACE%" %%f in (*.py) do (
+                        for /r "%WORKSPACE%\\notebooks" %%f in (*.py) do (
                             echo Found: %%~nxf
                             
-                            REM Check if file already has header
                             findstr /b /c:"# Databricks notebook source" "%%f" >nul
                             if !errorlevel! equ 0 (
                                 echo   Already has header
                                 set /a SKIPPED_COUNT+=1
                             ) else (
-                                REM Add header
                                 echo !HEADER!> "%%f.tmp"
                                 type "%%f" >> "%%f.tmp"
                                 move /y "%%f.tmp" "%%f" >nul
@@ -184,11 +171,17 @@ pipeline {
                             echo ========================================
                             echo.
                             
-                            databricks bundle validate
+                            databricks bundle validate -t production
                             if errorlevel 1 (
                                 echo ERROR: Validation failed!
                                 exit /b 1
                             )
+                            
+                            echo.
+                            echo ========================================
+                            echo Bundle Summary
+                            echo ========================================
+                            databricks bundle summary -t production
                             
                             echo.
                             echo Validation completed successfully!
@@ -206,7 +199,7 @@ pipeline {
             }
             steps {
                 script {
-                    echo 'Deploying Databricks asset bundle...'
+                    echo 'Deploying Databricks asset bundle (Notebooks + Jobs + Pipelines)...'
                     withCredentials([
                         string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
@@ -218,7 +211,6 @@ pipeline {
                             set "DATABRICKS_HOST=%DATABRICKS_HOST%"
                             set "DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%"
                             set "DATABRICKS_CLIENT_SECRET=%DATABRICKS_CLIENT_SECRET%"
-                            set "BUNDLE_VAR_DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%"
                             
                             echo.
                             echo ========================================
@@ -226,12 +218,21 @@ pipeline {
                             echo ========================================
                             echo.
                             
-                            databricks bundle deploy
+                            databricks bundle deploy -t production
                             if errorlevel 1 (
                                 echo ERROR: Deployment failed!
                                 exit /b 1
                             )
                             
+                            echo.
+                            echo ========================================
+                            echo Deployment Summary
+                            echo ========================================
+                            echo.
+                            echo Deployed Resources:
+                            echo - Notebooks: Synced to workspace
+                            echo - Jobs: Created/Updated
+                            echo - Pipelines: Created/Updated
                             echo.
                             echo Deployment completed successfully!
                         """
@@ -245,11 +246,16 @@ pipeline {
         failure {
             echo '=========================================='
             echo 'Pipeline FAILED!'
+            echo 'Check logs above for errors'
             echo '=========================================='
         }
         success {
             echo '=========================================='
             echo 'Pipeline completed SUCCESSFULLY!'
+            echo 'All resources deployed to production:'
+            echo '  ✓ Notebooks'
+            echo '  ✓ Jobs'
+            echo '  ✓ Pipelines'
             echo '=========================================='
         }
         always {
