@@ -2,50 +2,38 @@ pipeline {
   agent any
 
   environment {
-    // Workspace URL that matches the bundle target host
-    DATABRICKS_HOST       = 'https://adb-7405617499680447.7.azuredatabricks.net/'
-    DATABRICKS_AUTH_TYPE  = 'oauth-m2m'
+    DATABRICKS_HOST      = 'https://adb-7405617499680447.7.azuredatabricks.net/'
+    DATABRICKS_AUTH_TYPE = 'oauth-m2m'
+    PATH = "${env.PATH}:${env.HOME}/.databricks/bin"
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
-        powershell 'Get-ChildItem -Force'
+        sh 'ls -la'
       }
     }
 
-    stage('Install Databricks CLI (Go)') {
-    steps {
-        powershell '''
-            $ErrorActionPreference = "Stop"
+    stage('Install Databricks CLI') {
+      steps {
+        sh '''
+          set -e
 
-            Write-Host "Downloading Databricks Go CLI..."
+          if ! command -v databricks >/dev/null 2>&1; then
+            echo "Installing Databricks CLI..."
+            curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          else
+            echo "Databricks CLI already installed"
+          fi
 
-            $cliUrl = "https://github.com/databricks/cli/releases/latest/download/databricks_windows_amd64.zip"
-            $zipPath = "$env:WORKSPACE\\databricks_cli.zip"
-            $extractPath = "$env:WORKSPACE\\databricks_cli"
-
-            Invoke-WebRequest -Uri $cliUrl -OutFile $zipPath
-
-            Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-
-            $exePath = Join-Path $extractPath "databricks.exe"
-
-            if (-Not (Test-Path $exePath)) {
-                Write-Error "Databricks CLI not found after extraction!"
-            }
-
-            # Add CLI to PATH for this job
-            $env:Path = "$env:Path;$extractPath"
-            [System.Environment]::SetEnvironmentVariable("PATH", $env:Path, "Process")
-
-            databricks -v
+          databricks version
         '''
+      }
     }
-}
 
-    stage('Configure Databricks Auth (Service Principal OAuth M2M)') {
+    stage('Configure Databricks Auth (Service Principal)') {
       steps {
         withCredentials([
           usernamePassword(
@@ -54,13 +42,15 @@ pipeline {
             passwordVariable: 'DATABRICKS_CLIENT_SECRET'
           )
         ]) {
-          powershell '''
-            $ErrorActionPreference = "Stop"
-            [System.Environment]::SetEnvironmentVariable("DATABRICKS_HOST", $env:DATABRICKS_HOST, "Process")
-            [System.Environment]::SetEnvironmentVariable("DATABRICKS_AUTH_TYPE", $env:DATABRICKS_AUTH_TYPE, "Process")
-            [System.Environment]::SetEnvironmentVariable("DATABRICKS_CLIENT_ID", $env:DATABRICKS_CLIENT_ID, "Process")
-            [System.Environment]::SetEnvironmentVariable("DATABRICKS_CLIENT_SECRET", $env:DATABRICKS_CLIENT_SECRET, "Process")
-            Write-Host "Configured Databricks OAuth M2M (Service Principal)."
+          sh '''
+            set -e
+
+            export DATABRICKS_HOST=$DATABRICKS_HOST
+            export DATABRICKS_AUTH_TYPE=$DATABRICKS_AUTH_TYPE
+            export DATABRICKS_CLIENT_ID=$DATABRICKS_CLIENT_ID
+            export DATABRICKS_CLIENT_SECRET=$DATABRICKS_CLIENT_SECRET
+
+            echo "Databricks Service Principal configured"
           '''
         }
       }
@@ -68,11 +58,14 @@ pipeline {
 
     stage('Validate Bundle') {
       steps {
-        powershell '''
-          $ErrorActionPreference = "Stop"
-          if (!(Test-Path "databricks.yml")) {
-            Write-Error "databricks.yml not found at workspace root."
-          }
+        sh '''
+          set -e
+
+          if [ ! -f databricks.yml ]; then
+            echo "❌ databricks.yml not found"
+            exit 1
+          fi
+
           databricks bundle validate -t production
         '''
       }
@@ -80,14 +73,13 @@ pipeline {
 
     stage('Deploy Bundle') {
       steps {
-        powershell '''
-          $ErrorActionPreference = "Stop"
+        sh '''
+          set -e
           databricks bundle deploy -t production
         '''
       }
     }
   }
-
 
   post {
     success { echo '✅ Pipeline completed successfully!' }
