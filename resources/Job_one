@@ -2,7 +2,7 @@ resources:
   jobs:
     Job_One:
       name: Job_One
-      tasks:
+      tasks: 
         - task_key: Task_One
           notebook_task:
             notebook_path: /Workspace/Shared/Jenkins/notebooks/NoteBook
