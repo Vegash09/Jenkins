@@ -1,5 +1,8 @@
 bundle:
-  name: Jenkins
+  name: Deal Share Project
+  include:
+    - "pipelines/*.yml"
+    - "pipelines/*.yaml"
   exclude:
     - "Jenkinsfile"
     - "backup/**"
@@ -11,5 +14,6 @@ targets:
     mode: production
     default: true
     workspace:
-      host: https://adb-7405617499680447.7.azuredatabricks.net/
+      host: https://dbc-a8b738a8-498f.cloud.databricks.com/
       root_path: /Workspace/Shared/${bundle.target}
+

@@ -1,27 +1,13 @@
 pipeline {
     agent any
     
-    parameters {
-        choice(
-            name: 'DEPLOYMENT_MODE',
-            choices: ['Validate Only', 'Validate and Deploy'],
-            description: 'Choose the deployment mode'
-        )
-        booleanParam(
-            name: 'REQUIRE_APPROVAL',
-            defaultValue: true,
-            description: 'Require manual approval before deployment?'
-        )
-    }
-    
     environment {
         DATABRICKS_BUNDLE_ENV = 'production'
-        APPROVER_EMAIL = 'vegash.p@diggibyte.com'
+        DATABRICKS_CLI_PATH = "${WORKSPACE}/.databricks-cli"
     }
     
     options {
         skipDefaultCheckout(false)
-        timeout(time: 1, unit: 'HOURS')
     }
     
     stages {
@@ -32,100 +18,62 @@ pipeline {
             }
         }
         
-        stage('Display Build Parameters') {
-            steps {
-                script {
-                    echo '=========================================='
-                    echo 'BUILD PARAMETERS'
-                    echo '=========================================='
-                    echo "Deployment Mode: ${params.DEPLOYMENT_MODE}"
-                    echo "Require Approval: ${params.REQUIRE_APPROVAL}"
-                    echo "Approver: ${env.APPROVER_EMAIL}"
-                    echo '=========================================='
-                }
-            }
-        }
-        
         stage('Setup Databricks CLI') {
             steps {
                 script {
                     echo 'Downloading and installing Databricks CLI...'
-                    powershell '''
-                        $ErrorActionPreference = "Stop"
+                    sh '''#!/bin/bash
+                        set -e
                         
-                        $cliPath = "C:\\databricks-cli"
-                        $cliExe = "$cliPath\\databricks.exe"
+                        CLI_PATH="${DATABRICKS_CLI_PATH}"
+                        CLI_EXE="${CLI_PATH}/databricks"
                         
-                        # Create directory
-                        if (!(Test-Path $cliPath)) {
-                            New-Item -ItemType Directory -Path $cliPath -Force | Out-Null
-                            Write-Host "Created directory: $cliPath"
-                        }
+                        # Create directory (no sudo needed - using workspace)
+                        if [ ! -d "$CLI_PATH" ]; then
+                            mkdir -p "$CLI_PATH"
+                            echo "Created directory: $CLI_PATH"
+                        fi
                         
                         # Check if already installed
-                        if (Test-Path $cliExe) {
-                            Write-Host "Databricks CLI already exists!"
-                            & $cliExe version
+                        if [ -f "$CLI_EXE" ]; then
+                            echo "Databricks CLI already exists!"
+                            "$CLI_EXE" version
                             exit 0
-                        }
+                        fi
                         
-                        Write-Host "Downloading Databricks CLI..."
+                        echo "Downloading Databricks CLI..."
                         
-                        # Use the correct URL format
-                        $version = "v0.234.0"  # Using a stable version
-                        $downloadUrl = "https://github.com/databricks/cli/releases/download/$version/databricks_cli_${version}_windows_amd64.zip"
-                        $zipFile = "$env:TEMP\\databricks_cli.zip"
+                        # Use the correct URL format for Linux
+                        VERSION="v0.234.0"
+                        DOWNLOAD_URL="https://github.com/databricks/cli/releases/download/${VERSION}/databricks_cli_${VERSION#v}_linux_amd64.zip"
+                        ZIP_FILE="/tmp/databricks_cli_$$.zip"
                         
-                        Write-Host "Download URL: $downloadUrl"
+                        echo "Download URL: $DOWNLOAD_URL"
                         
-                        try {
-                            # Download with progress
-                            $ProgressPreference = 'SilentlyContinue'
-                            Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFile -UseBasicParsing
-                            Write-Host "Downloaded successfully!"
-                            
-                            # Extract
-                            Write-Host "Extracting..."
-                            Expand-Archive -Path $zipFile -DestinationPath $cliPath -Force
-                            
-                            # Verify extraction
-                            if (Test-Path $cliExe) {
-                                Write-Host "Installation successful!"
-                                & $cliExe version
-                            } else {
-                                Write-Host "ERROR: databricks.exe not found after extraction!"
-                                Write-Host "Contents of $cliPath :"
-                                Get-ChildItem $cliPath | Format-Table Name
-                                exit 1
-                            }
-                            
-                            # Cleanup
-                            Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
-                            
-                        } catch {
-                            Write-Host "ERROR: $_"
-                            Write-Host "Failed URL: $downloadUrl"
-                            
-                            # Try alternate method - download latest directly
-                            Write-Host "`nTrying alternate download method..."
-                            
-                            try {
-                                # Download databricks.exe directly without version
-                                $altUrl = "https://github.com/databricks/cli/releases/download/v0.234.0/databricks_cli_0.234.0_windows_amd64.zip"
-                                Invoke-WebRequest -Uri $altUrl -OutFile $zipFile -UseBasicParsing
-                                Expand-Archive -Path $zipFile -DestinationPath $cliPath -Force
-                                
-                                if (Test-Path $cliExe) {
-                                    Write-Host "Alternate download successful!"
-                                    & $cliExe version
-                                } else {
-                                    throw "Still could not find databricks.exe"
-                                }
-                            } catch {
-                                Write-Host "ERROR: Alternate method also failed: $_"
-                                exit 1
-                            }
-                        }
+                        # Download
+                        curl -L "$DOWNLOAD_URL" -o "$ZIP_FILE"
+                        echo "Downloaded successfully!"
+                        
+                        # Extract
+                        echo "Extracting..."
+                        unzip -o "$ZIP_FILE" -d "$CLI_PATH"
+                        
+                        # Make executable
+                        chmod +x "$CLI_EXE"
+                        
+                        # Verify extraction
+                        if [ -f "$CLI_EXE" ]; then
+                            echo "Installation successful!"
+                            "$CLI_EXE" version
+                        else
+                            echo "ERROR: databricks not found after extraction!"
+                            echo "Contents of $CLI_PATH:"
+                            ls -la "$CLI_PATH"
+                            exit 1
+                        fi
+                        
+                        # Cleanup
+                        rm -f "$ZIP_FILE"
                     '''
                 }
             }
@@ -140,19 +88,17 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        powershell '''
-                            $ErrorActionPreference = "Stop"
+                        sh '''#!/bin/bash
+                            set -e
                             
-                            Write-Host "Setting Databricks environment variables..."
+                            echo "Setting Databricks environment variables..."
                             
-                            # Set environment variables for this session
-                            $env:DATABRICKS_HOST = $env:DATABRICKS_HOST
-                            $env:DATABRICKS_CLIENT_ID = $env:DATABRICKS_CLIENT_ID
-                            $env:DATABRICKS_CLIENT_SECRET = $env:DATABRICKS_CLIENT_SECRET
-                            
-                            Write-Host "DATABRICKS_HOST: $env:DATABRICKS_HOST"
-                            Write-Host "DATABRICKS_CLIENT_ID: $($env:DATABRICKS_CLIENT_ID.Substring(0,8))..." # Show only first 8 chars
-                            Write-Host "Authentication configured successfully!"
+                            # Verify credentials are set
+                            echo "DATABRICKS_HOST: ${DATABRICKS_HOST}"
+                            # Show only first 8 chars using bash substring
+                            CLIENT_ID_PREVIEW=$(echo ${DATABRICKS_CLIENT_ID} | cut -c1-8)
+                            echo "DATABRICKS_CLIENT_ID: ${CLIENT_ID_PREVIEW}..."
+                            echo "Authentication configured successfully!"
                         '''
                         
                         // Store credentials in environment for subsequent stages
@@ -169,35 +115,32 @@ pipeline {
             steps {
                 script {
                     echo 'Prepending Databricks notebook header to all .py files...'
-                    powershell '''
-                        $header = "# Databricks notebook source"
-                        $processedCount = 0
-                        $skippedCount = 0
+                    sh '''#!/bin/bash
+                        HEADER="# Databricks notebook source"
+                        PROCESSED_COUNT=0
+                        SKIPPED_COUNT=0
                         
-                        Write-Host "Scanning for Python files in: $env:WORKSPACE"
+                        echo "Scanning for Python files in: ${WORKSPACE}"
                         
-                        Get-ChildItem -Path $env:WORKSPACE -Filter "*.py" -Recurse | ForEach-Object {
-                            $file = $_.FullName
-                            Write-Host "Found: $($_.Name)"
+                        # Find all .py files
+                        find "${WORKSPACE}" -type f -name "*.py" | while read -r file; do
+                            echo "Found: $(basename "$file")"
                             
-                            try {
-                                $content = Get-Content $file -Raw -ErrorAction Stop
-                                
-                                if ($content -and $content -notmatch "^# Databricks notebook source") {
-                                    $newContent = "$header`n$content"
-                                    Set-Content -Path $file -Value $newContent -NoNewline
-                                    Write-Host "  Added header" -ForegroundColor Green
-                                    $processedCount++
-                                } else {
-                                    Write-Host "  Already has header" -ForegroundColor Yellow
-                                    $skippedCount++
-                                }
-                            } catch {
-                                Write-Host "  Error: $_" -ForegroundColor Red
-                            }
-                        }
+                            # Check if file already has header
+                            if head -n 1 "$file" | grep -q "^# Databricks notebook source"; then
+                                echo "  Already has header"
+                                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+                            else
+                                # Add header
+                                echo "$HEADER" | cat - "$file" > "${file}.tmp"
+                                mv "${file}.tmp" "$file"
+                                echo "  Added header"
+                                PROCESSED_COUNT=$((PROCESSED_COUNT + 1))
+                            fi
+                        done
                         
-                        Write-Host "`nProcessed: $processedCount | Skipped: $skippedCount"
+                        echo ""
+                        echo "Processed: $PROCESSED_COUNT | Skipped: $SKIPPED_COUNT"
                     '''
                 }
             }
@@ -212,83 +155,24 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        bat """
-                            set PATH=%PATH%;C:\\databricks-cli
-                            set DATABRICKS_HOST=${DATABRICKS_HOST}
-                            set DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
-                            set DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
+                        sh """#!/bin/bash
+                            set -e
+                            export PATH=\$PATH:${DATABRICKS_CLI_PATH}
+                            export DATABRICKS_HOST=${DATABRICKS_HOST}
+                            export DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                            export DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
                             
-                            echo.
-                            echo ========================================
-                            echo Running: databricks bundle validate
-                            echo ========================================
-                            echo.
+                            echo ""
+                            echo "========================================"
+                            echo "Running: databricks bundle validate"
+                            echo "========================================"
+                            echo ""
                             
                             databricks bundle validate
                             
-                            echo.
-                            echo Validation completed successfully!
+                            echo ""
+                            echo "Validation completed successfully!"
                         """
-                    }
-                }
-            }
-        }
-        
-        stage('Approval Gate') {
-            when {
-                expression {
-                    // Only require approval if "Validate and Deploy" is selected and approval is enabled
-                    params.DEPLOYMENT_MODE == 'Validate and Deploy' &&
-                    params.REQUIRE_APPROVAL == true
-                }
-            }
-            steps {
-                script {
-                    echo '=========================================='
-                    echo 'WAITING FOR DEPLOYMENT APPROVAL'
-                    echo '=========================================='
-                    echo "Approval required from: ${env.APPROVER_EMAIL}"
-                    echo "Build URL: ${env.BUILD_URL}"
-                    echo '=========================================='
-                    
-                    try {
-                        timeout(time: 30, unit: 'MINUTES') {
-                            def approvalInput = input(
-                                id: 'DeployApproval',
-                                message: "Deployment approval required from ${env.APPROVER_EMAIL}. Do you approve deployment to Production?",
-                                parameters: [
-                                    choice(
-                                        name: 'APPROVE_DEPLOY',
-                                        choices: ['Approve', 'Reject'],
-                                        description: 'Approve or Reject the deployment'
-                                    ),
-                                    text(
-                                        name: 'APPROVAL_COMMENT',
-                                        defaultValue: '',
-                                        description: 'Optional: Add a comment about this deployment'
-                                    )
-                                ],
-                                submitter: 'vegash.p@diggibyte.com',
-                                submitterParameter: 'APPROVED_BY'
-                            )
-                            
-                            if (approvalInput.APPROVE_DEPLOY == 'Reject') {
-                                error("Deployment rejected by ${approvalInput.APPROVED_BY}")
-                            }
-                            
-                            echo '=========================================='
-                            echo "✓ Deployment APPROVED by: ${approvalInput.APPROVED_BY}"
-                            if (approvalInput.APPROVAL_COMMENT) {
-                                echo "Comment: ${approvalInput.APPROVAL_COMMENT}"
-                            }
-                            echo '=========================================='
-                        }
-                    } catch (err) {
-                        echo '=========================================='
-                        echo "✗ Deployment REJECTED or TIMEOUT"
-                        echo "Reason: ${err.message}"
-                        echo '=========================================='
-                        error("Deployment aborted: ${err.message}")
                     }
                 }
             }
@@ -297,9 +181,7 @@ pipeline {
         stage('Deploy Databricks Bundle') {
             when {
                 expression { 
-                    // Only deploy if "Validate and Deploy" is selected
-                    params.DEPLOYMENT_MODE == 'Validate and Deploy' &&
-                    (currentBuild.result == null || currentBuild.result == 'SUCCESS')
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS' 
                 }
             }
             steps {
@@ -310,23 +192,24 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        bat """
-                            set PATH=%PATH%;C:\\databricks-cli
-                            set DATABRICKS_HOST=${DATABRICKS_HOST}
-                            set DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
-                            set DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
-                            set BUNDLE_VAR_DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                        sh """#!/bin/bash
+                            set -e
+                            export PATH=\$PATH:${DATABRICKS_CLI_PATH}
+                            export DATABRICKS_HOST=${DATABRICKS_HOST}
+                            export DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                            export DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
+                            export BUNDLE_VAR_DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
                             
-                            echo.
-                            echo ========================================
-                            echo Running: databricks bundle deploy
-                            echo ========================================
-                            echo.
+                            echo ""
+                            echo "========================================"
+                            echo "Running: databricks bundle deploy"
+                            echo "========================================"
+                            echo ""
                             
                             databricks bundle deploy
                             
-                            echo.
-                            echo Deployment completed successfully!
+                            echo ""
+                            echo "Deployment completed successfully!"
                         """
                     }
                 }
@@ -336,40 +219,14 @@ pipeline {
     
     post {
         failure {
-            script {
-                echo '=========================================='
-                echo '✗ Pipeline FAILED!'
-                echo '=========================================='
-                echo "Failed Stage: ${env.STAGE_NAME}"
-                echo "Build URL: ${env.BUILD_URL}"
-                echo "Contact: ${env.APPROVER_EMAIL}"
-                echo '=========================================='
-            }
+            echo '=========================================='
+            echo 'Pipeline FAILED!'
+            echo '=========================================='
         }
         success {
-            script {
-                echo '=========================================='
-                echo '✓ Pipeline completed SUCCESSFULLY!'
-                echo '=========================================='
-                echo "Deployment Mode: ${params.DEPLOYMENT_MODE}"
-                
-                if (params.DEPLOYMENT_MODE == 'Validate Only') {
-                    echo '✓ Validation completed - No deployment performed'
-                } else if (params.DEPLOYMENT_MODE == 'Validate and Deploy') {
-                    echo '✓ Validation and deployment to production completed successfully!'
-                }
-                echo '=========================================='
-            }
-        }
-        aborted {
-            script {
-                echo '=========================================='
-                echo '⚠ Pipeline was ABORTED!'
-                echo '=========================================='
-                echo 'Deployment was cancelled or timed out'
-                echo "Contact: ${env.APPROVER_EMAIL} for more information"
-                echo '=========================================='
-            }
+            echo '=========================================='
+            echo 'Pipeline completed SUCCESSFULLY!'
+            echo '=========================================='
         }
         always {
             echo 'Cleaning up workspace...'
