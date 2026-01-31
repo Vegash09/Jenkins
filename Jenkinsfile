@@ -4,14 +4,10 @@ pipeline {
     environment {
         DATABRICKS_BUNDLE_ENV = 'production'
         DATABRICKS_CLI_PATH = "${WORKSPACE}/.databricks-cli"
-        DATABRICKS_CLI_VERSION = 'v0.234.0'
     }
     
     options {
         skipDefaultCheckout(false)
-        timestamps()
-        timeout(time: 30, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
     
     stages {
@@ -25,162 +21,164 @@ pipeline {
         stage('Setup Databricks CLI') {
             steps {
                 script {
-                    echo 'Setting up Databricks CLI...'
+                    echo 'Downloading and installing Databricks CLI...'
                     sh '''#!/bin/bash
-                        set -euo pipefail
+                        set -e
                         
                         CLI_PATH="${DATABRICKS_CLI_PATH}"
                         CLI_EXE="${CLI_PATH}/databricks"
                         
-                        # Create directory if it doesn't exist
-                        mkdir -p "${CLI_PATH}"
-                        echo "CLI directory: ${CLI_PATH}"
+                        # Create directory (no sudo needed - using workspace)
+                        if [ ! -d "$CLI_PATH" ]; then
+                            mkdir -p "$CLI_PATH"
+                            echo "Created directory: $CLI_PATH"
+                        fi
                         
-                        # Check if CLI is already installed
-                        if [ -f "${CLI_EXE}" ]; then
-                            echo "Databricks CLI already installed"
-                            "${CLI_EXE}" version
+                        # Check if already installed
+                        if [ -f "$CLI_EXE" ]; then
+                            echo "Databricks CLI already exists!"
+                            "$CLI_EXE" version
                             exit 0
                         fi
                         
-                        echo "Installing Databricks CLI ${DATABRICKS_CLI_VERSION}..."
+                        echo "Downloading Databricks CLI..."
                         
-                        # Download URL
-                        VERSION="${DATABRICKS_CLI_VERSION#v}"
-                        DOWNLOAD_URL="https://github.com/databricks/cli/releases/download/${DATABRICKS_CLI_VERSION}/databricks_cli_${VERSION}_linux_amd64.zip"
-                        ZIP_FILE="/tmp/databricks_cli_${BUILD_NUMBER}.zip"
+                        # Use the correct URL format for Linux
+                        VERSION="v0.234.0"
+                        DOWNLOAD_URL="https://github.com/databricks/cli/releases/download/${VERSION}/databricks_cli_${VERSION#v}_linux_amd64.zip"
+                        ZIP_FILE="/tmp/databricks_cli_$$.zip"
                         
-                        echo "Downloading from: ${DOWNLOAD_URL}"
-                        curl -fsSL "${DOWNLOAD_URL}" -o "${ZIP_FILE}"
+                        echo "Download URL: $DOWNLOAD_URL"
+                        
+                        # Download
+                        curl -L "$DOWNLOAD_URL" -o "$ZIP_FILE"
+                        echo "Downloaded successfully!"
                         
                         # Extract
-                        echo "Extracting CLI..."
-                        unzip -q -o "${ZIP_FILE}" -d "${CLI_PATH}"
+                        echo "Extracting..."
+                        unzip -o "$ZIP_FILE" -d "$CLI_PATH"
                         
                         # Make executable
-                        chmod +x "${CLI_EXE}"
+                        chmod +x "$CLI_EXE"
                         
-                        # Verify installation
-                        if [ ! -f "${CLI_EXE}" ]; then
-                            echo "ERROR: Installation failed - databricks executable not found"
-                            ls -la "${CLI_PATH}"
+                        # Verify extraction
+                        if [ -f "$CLI_EXE" ]; then
+                            echo "Installation successful!"
+                            "$CLI_EXE" version
+                        else
+                            echo "ERROR: databricks not found after extraction!"
+                            echo "Contents of $CLI_PATH:"
+                            ls -la "$CLI_PATH"
                             exit 1
                         fi
                         
-                        echo "Installation successful!"
-                        "${CLI_EXE}" version
-                        
                         # Cleanup
-                        rm -f "${ZIP_FILE}"
+                        rm -f "$ZIP_FILE"
                     '''
                 }
             }
         }
         
-        stage('Configure Authentication') {
+        stage('Configure Databricks Authentication') {
             steps {
                 script {
-                    echo 'Configuring Databricks authentication...'
+                    echo 'Setting up Databricks authentication...'
                     withCredentials([
-                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST'),
                         string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
-                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET')
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        // Validate credentials are set
                         sh '''#!/bin/bash
-                            set -euo pipefail
+                            set -e
                             
-                            if [ -z "${DATABRICKS_HOST}" ] || [ -z "${DATABRICKS_CLIENT_ID}" ] || [ -z "${DATABRICKS_CLIENT_SECRET}" ]; then
-                                echo "ERROR: Missing required Databricks credentials"
-                                exit 1
-                            fi
+                            echo "Setting Databricks environment variables..."
                             
-                            echo "Databricks Host: ${DATABRICKS_HOST}"
-                            echo "Client ID: ${DATABRICKS_CLIENT_ID:0:8}..."
-                            echo "Authentication configured successfully"
+                            # Verify credentials are set
+                            echo "DATABRICKS_HOST: ${DATABRICKS_HOST}"
+                            # Show only first 8 chars using bash substring
+                            CLIENT_ID_PREVIEW=$(echo ${DATABRICKS_CLIENT_ID} | cut -c1-8)
+                            echo "DATABRICKS_CLIENT_ID: ${CLIENT_ID_PREVIEW}..."
+                            echo "Authentication configured successfully!"
                         '''
                         
-                        // Export credentials for subsequent stages
+                        // Store credentials in environment for subsequent stages
                         env.DATABRICKS_HOST = DATABRICKS_HOST
                         env.DATABRICKS_CLIENT_ID = DATABRICKS_CLIENT_ID
                         env.DATABRICKS_CLIENT_SECRET = DATABRICKS_CLIENT_SECRET
+                        env.BUNDLE_VAR_DATABRICKS_CLIENT_ID = DATABRICKS_CLIENT_ID
                     }
                 }
             }
         }
         
-        stage('Prepare Databricks Notebooks') {
+        stage('Ensure Python files are Databricks notebooks') {
             steps {
                 script {
-                    echo 'Ensuring Python files have Databricks notebook headers...'
+                    echo 'Prepending Databricks notebook header to all .py files...'
                     sh '''#!/bin/bash
-                        set -euo pipefail
-                        
                         HEADER="# Databricks notebook source"
-                        PROCESSED=0
-                        SKIPPED=0
+                        PROCESSED_COUNT=0
+                        SKIPPED_COUNT=0
                         
-                        echo "Scanning for Python files..."
+                        echo "Scanning for Python files in: ${WORKSPACE}"
                         
-                        # Process all .py files
-                        while IFS= read -r -d '' file; do
-                            echo "Checking: ${file}"
+                        # Find all .py files
+                        find "${WORKSPACE}" -type f -name "*.py" | while read -r file; do
+                            echo "Found: $(basename "$file")"
                             
-                            # Check if header already exists
-                            if head -n 1 "${file}" | grep -qF "# Databricks notebook source"; then
-                                echo "  ✓ Already has header"
-                                ((SKIPPED++))
+                            # Check if file already has header
+                            if head -n 1 "$file" | grep -q "^# Databricks notebook source"; then
+                                echo "  Already has header"
+                                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
                             else
                                 # Add header
-                                echo "${HEADER}" | cat - "${file}" > "${file}.tmp"
-                                mv "${file}.tmp" "${file}"
-                                echo "  + Added header"
-                                ((PROCESSED++))
+                                echo "$HEADER" | cat - "$file" > "${file}.tmp"
+                                mv "${file}.tmp" "$file"
+                                echo "  Added header"
+                                PROCESSED_COUNT=$((PROCESSED_COUNT + 1))
                             fi
-                        done < <(find "${WORKSPACE}" -type f -name "*.py" -print0)
+                        done
                         
                         echo ""
-                        echo "Summary: Processed=${PROCESSED}, Skipped=${SKIPPED}"
+                        echo "Processed: $PROCESSED_COUNT | Skipped: $SKIPPED_COUNT"
                     '''
                 }
             }
         }
         
-        stage('Validate Bundle') {
+        stage('Validate Databricks Bundle') {
             steps {
                 script {
-                    echo 'Validating Databricks asset bundle configuration...'
+                    echo 'Validating Databricks asset bundle...'
                     withCredentials([
-                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST'),
                         string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
-                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET')
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
                         sh """#!/bin/bash
-                            set -euo pipefail
-                            
-                            export PATH=\${PATH}:${DATABRICKS_CLI_PATH}
+                            set -e
+                            export PATH=\$PATH:${DATABRICKS_CLI_PATH}
                             export DATABRICKS_HOST=${DATABRICKS_HOST}
                             export DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
                             export DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
                             
+                            echo ""
                             echo "========================================"
-                            echo "Databricks Bundle Validation"
+                            echo "Running: databricks bundle validate"
                             echo "========================================"
-                            echo "Environment: ${DATABRICKS_BUNDLE_ENV}"
-                            echo "Host: ${DATABRICKS_HOST}"
                             echo ""
                             
-                            databricks bundle validate --environment ${DATABRICKS_BUNDLE_ENV}
+                            databricks bundle validate
                             
                             echo ""
-                            echo "✓ Validation successful"
+                            echo "Validation completed successfully!"
                         """
                     }
                 }
             }
         }
         
-        stage('Deploy Bundle') {
+        stage('Deploy Databricks Bundle') {
             when {
                 expression { 
                     currentBuild.result == null || currentBuild.result == 'SUCCESS' 
@@ -190,29 +188,28 @@ pipeline {
                 script {
                     echo 'Deploying Databricks asset bundle...'
                     withCredentials([
-                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST'),
                         string(credentialsId: 'databricks-client-id', variable: 'DATABRICKS_CLIENT_ID'),
-                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET')
+                        string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
+                        string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
                         sh """#!/bin/bash
-                            set -euo pipefail
-                            
-                            export PATH=\${PATH}:${DATABRICKS_CLI_PATH}
+                            set -e
+                            export PATH=\$PATH:${DATABRICKS_CLI_PATH}
                             export DATABRICKS_HOST=${DATABRICKS_HOST}
                             export DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
                             export DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
-                            
-                            echo "========================================"
-                            echo "Databricks Bundle Deployment"
-                            echo "========================================"
-                            echo "Environment: ${DATABRICKS_BUNDLE_ENV}"
-                            echo "Host: ${DATABRICKS_HOST}"
-                            echo ""
-                            
-                            databricks bundle deploy --environment ${DATABRICKS_BUNDLE_ENV}
+                            export BUNDLE_VAR_DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
                             
                             echo ""
-                            echo "Deployment successful"
+                            echo "========================================"
+                            echo "Running: databricks bundle deploy"
+                            echo "========================================"
+                            echo ""
+                            
+                            databricks bundle deploy
+                            
+                            echo ""
+                            echo "Deployment completed successfully!"
                         """
                     }
                 }
@@ -221,23 +218,19 @@ pipeline {
     }
     
     post {
-        success {
-            echo '=========================================='
-            echo 'Pipeline completed successfully!'
-            echo '=========================================='
-        }
         failure {
             echo '=========================================='
-            echo 'Pipeline failed!'
+            echo 'Pipeline FAILED!'
+            echo '=========================================='
+        }
+        success {
+            echo '=========================================='
+            echo 'Pipeline completed SUCCESSFULLY!'
             echo '=========================================='
         }
         always {
             echo 'Cleaning up workspace...'
-            cleanWs(
-                deleteDirs: true,
-                disableDeferredWipeout: true,
-                notFailBuild: true
-            )
+            cleanWs()
         }
     }
 }
