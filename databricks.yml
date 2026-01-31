@@ -22,14 +22,17 @@ targets:
       - group_name: DataEngineer
         level: CAN_MANAGE
 
-# Declare resources that should be deployed
-resources:
-  pipelines:
-    # Example pipeline picked from pipelines/ folder
-    my_pipeline:
-      definition_file: pipelines/my_pipeline.yml
 
+
+resources:
   jobs:
-    # Example job picked from jobs/ folder
-    daily_job:
-      definition_file: jobs/daily_job.yml
+    vegas:
+      name: vegas
+      tasks:
+        - task_key: Vegash
+          notebook_task:
+            notebook_path: /Workspace/Shared/Jenkins/notebooks/NoteBook
+            source: WORKSPACE
+      queue:
+        enabled: true
+      performance_target: PERFORMANCE_OPTIMIZED
