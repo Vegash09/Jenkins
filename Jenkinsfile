@@ -3,7 +3,8 @@ pipeline {
     
     environment {
         DATABRICKS_BUNDLE_ENV = 'production'
-        DATABRICKS_CLI_PATH = "${WORKSPACE}\\.databricks-cli"
+        // Install CLI in TEMP directory to avoid deploying it to Databricks
+        DATABRICKS_CLI_PATH = "${env.TEMP}\\.databricks-cli"
     }
     
     options {
@@ -36,7 +37,7 @@ pipeline {
                         
                         REM Check if already installed
                         if exist "%CLI_EXE%" (
-                            echo Databricks CLI already exists!
+                            echo Databricks CLI already exists at %CLI_PATH%
                             "%CLI_EXE%" version
                             exit /b 0
                         )
@@ -47,7 +48,7 @@ pipeline {
                         set VERSION=v0.234.0
                         set VERSION_NUM=0.234.0
                         set DOWNLOAD_URL=https://github.com/databricks/cli/releases/download/%VERSION%/databricks_cli_%VERSION_NUM%_windows_amd64.zip
-                        set ZIP_FILE=%TEMP%\\databricks_cli.zip
+                        set ZIP_FILE=%TEMP%\\databricks_cli_temp.zip
                         
                         echo Download URL: %DOWNLOAD_URL%
                         
@@ -56,7 +57,7 @@ pipeline {
                         echo Downloaded successfully!
                         
                         REM Extract using PowerShell
-                        echo Extracting...
+                        echo Extracting to: %CLI_PATH%
                         powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%CLI_PATH%' -Force"
                         
                         REM Verify extraction
@@ -115,8 +116,8 @@ pipeline {
                         
                         Write-Host "Scanning for Python files in: $env:WORKSPACE"
                         
-                        # Find all .py files
-                        Get-ChildItem -Path $env:WORKSPACE -Filter "*.py" -Recurse -File | ForEach-Object {
+                        # Find all .py files in notebooks folder only
+                        Get-ChildItem -Path "$env:WORKSPACE\\notebooks" -Filter "*.py" -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
                             Write-Host "Found: $($_.Name)"
                             
                             # Check if file already has header
@@ -238,6 +239,8 @@ pipeline {
             echo '=========================================='
             echo 'Pipeline completed SUCCESSFULLY!'
             echo '=========================================='
+            echo ''
+            echo 'Deployed to: /Workspace/Shared/production/notebooks/'
         }
         always {
             echo 'Cleaning up workspace...'
@@ -245,3 +248,9 @@ pipeline {
         }
     }
 }
+
+
+
+
+
+

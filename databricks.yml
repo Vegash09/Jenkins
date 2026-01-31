@@ -2,7 +2,7 @@ bundle:
   name: Deal Share Project
 
 sync:
-  # Only include notebooks directory
+  # ONLY include notebooks folder
   include:
     - "notebooks/**"
   
@@ -12,9 +12,17 @@ sync:
     - ".gitignore"
     - "Jenkinsfile"
     - "databricks.yml"
-    - "README.md"
-    - "**/__pycache__/**"
-    - "**/*.pyc"
+    - ".databricks-cli/**"      # Exclude CLI folder
+    - "**/.databricks-cli/**"   # Exclude from anywhere
+    - "jobs/**"                 # Exclude jobs folder
+    - "state/**"                # Exclude state folder
+    - "artifacts/**"            # Exclude artifacts
+    - "**/__pycache__/**"       # Python cache
+    - "**/*.pyc"                # Compiled Python
+    - "*.md"                    # Markdown files
+    - "*.txt"                   # Text files
+    - ".vscode/**"              # VS Code settings
+    - ".idea/**"                # IntelliJ settings
 
 targets:
   production:
