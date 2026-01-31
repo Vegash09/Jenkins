@@ -1,15 +1,20 @@
 bundle:
   name: Deal Share Project
+
+sync:
+  # Only include notebooks directory
   include:
-    - "pipelines/*.yml"
-    - "pipelines/*.yaml"
-    - "jobs/*.yml"
-    - "jobs/*.yaml"
-    - "src/**"
+    - "notebooks/**"
+  
+  # Exclude everything else
   exclude:
+    - ".git/**"
+    - ".gitignore"
     - "Jenkinsfile"
-    - "backup/**"
+    - "databricks.yml"
     - "README.md"
+    - "**/__pycache__/**"
+    - "**/*.pyc"
 
 targets:
   production:
