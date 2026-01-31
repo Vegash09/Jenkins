@@ -149,7 +149,8 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        bat """
+                        // Use a script block to capture exit code properly
+                        def exitCode = bat(returnStatus: true, script: """
                             @echo off
                             set PATH=%PATH%;%DATABRICKS_CLI_PATH%
                             set DATABRICKS_HOST=%DATABRICKS_HOST%
@@ -164,9 +165,14 @@ pipeline {
                             
                             databricks bundle validate
                             
-                            echo.
-                            echo Validation completed successfully!
-                        """
+                            exit /b %ERRORLEVEL%
+                        """)
+                        
+                        if (exitCode != 0) {
+                            error("Databricks bundle validation failed with exit code ${exitCode}")
+                        } else {
+                            echo "Validation completed successfully!"
+                        }
                     }
                 }
             }
@@ -186,7 +192,7 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        bat """
+                        def exitCode = bat(returnStatus: true, script: """
                             @echo off
                             set PATH=%PATH%;%DATABRICKS_CLI_PATH%
                             set DATABRICKS_HOST=%DATABRICKS_HOST%
@@ -202,9 +208,14 @@ pipeline {
                             
                             databricks bundle deploy
                             
-                            echo.
-                            echo Deployment completed successfully!
-                        """
+                            exit /b %ERRORLEVEL%
+                        """)
+                        
+                        if (exitCode != 0) {
+                            error("Databricks bundle deployment failed with exit code ${exitCode}")
+                        } else {
+                            echo "Deployment completed successfully!"
+                        }
                     }
                 }
             }
@@ -216,6 +227,12 @@ pipeline {
             echo '=========================================='
             echo 'Pipeline FAILED!'
             echo '=========================================='
+            echo ''
+            echo 'Common issues to check:'
+            echo '1. Databricks credentials (client ID/secret) are correct'
+            echo '2. Databricks host URL is correct'
+            echo '3. Service principal has proper permissions'
+            echo '4. databricks.yml configuration is valid'
         }
         success {
             echo '=========================================='
