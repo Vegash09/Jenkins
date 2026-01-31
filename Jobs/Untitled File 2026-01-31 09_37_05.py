@@ -1,0 +1,12 @@
+resources:
+  jobs:
+    vegas:
+      name: vegas
+      tasks:
+        - task_key: Vegash
+          notebook_task:
+            notebook_path: /Workspace/Shared/Jenkins/notebooks/NoteBook
+            source: WORKSPACE
+      queue:
+        enabled: true
+      performance_target: PERFORMANCE_OPTIMIZED
