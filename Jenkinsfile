@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DATABRICKS_BUNDLE_ENV = 'production'
-        DATABRICKS_CLI_PATH = "${WORKSPACE}/.databricks-cli"
+        DATABRICKS_CLI_PATH = "${WORKSPACE}\\.databricks-cli"
     }
     
     options {
@@ -22,58 +22,56 @@ pipeline {
             steps {
                 script {
                     echo 'Downloading and installing Databricks CLI...'
-                    sh '''#!/bin/bash
-                        set -e
+                    bat '''
+                        @echo off
                         
-                        CLI_PATH="${DATABRICKS_CLI_PATH}"
-                        CLI_EXE="${CLI_PATH}/databricks"
+                        set CLI_PATH=%DATABRICKS_CLI_PATH%
+                        set CLI_EXE=%CLI_PATH%\\databricks.exe
                         
-                        # Create directory (no sudo needed - using workspace)
-                        if [ ! -d "$CLI_PATH" ]; then
-                            mkdir -p "$CLI_PATH"
-                            echo "Created directory: $CLI_PATH"
-                        fi
+                        REM Create directory if it doesn't exist
+                        if not exist "%CLI_PATH%" (
+                            mkdir "%CLI_PATH%"
+                            echo Created directory: %CLI_PATH%
+                        )
                         
-                        # Check if already installed
-                        if [ -f "$CLI_EXE" ]; then
-                            echo "Databricks CLI already exists!"
-                            "$CLI_EXE" version
-                            exit 0
-                        fi
+                        REM Check if already installed
+                        if exist "%CLI_EXE%" (
+                            echo Databricks CLI already exists!
+                            "%CLI_EXE%" version
+                            exit /b 0
+                        )
                         
-                        echo "Downloading Databricks CLI..."
+                        echo Downloading Databricks CLI...
                         
-                        # Use the correct URL format for Linux
-                        VERSION="v0.234.0"
-                        DOWNLOAD_URL="https://github.com/databricks/cli/releases/download/${VERSION}/databricks_cli_${VERSION#v}_linux_amd64.zip"
-                        ZIP_FILE="/tmp/databricks_cli_$$.zip"
+                        REM Use the correct URL format for Windows
+                        set VERSION=v0.234.0
+                        set VERSION_NUM=0.234.0
+                        set DOWNLOAD_URL=https://github.com/databricks/cli/releases/download/%VERSION%/databricks_cli_%VERSION_NUM%_windows_amd64.zip
+                        set ZIP_FILE=%TEMP%\\databricks_cli.zip
                         
-                        echo "Download URL: $DOWNLOAD_URL"
+                        echo Download URL: %DOWNLOAD_URL%
                         
-                        # Download
-                        curl -L "$DOWNLOAD_URL" -o "$ZIP_FILE"
-                        echo "Downloaded successfully!"
+                        REM Download using PowerShell
+                        powershell -Command "Invoke-WebRequest -Uri '%DOWNLOAD_URL%' -OutFile '%ZIP_FILE%'"
+                        echo Downloaded successfully!
                         
-                        # Extract
-                        echo "Extracting..."
-                        unzip -o "$ZIP_FILE" -d "$CLI_PATH"
+                        REM Extract using PowerShell
+                        echo Extracting...
+                        powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%CLI_PATH%' -Force"
                         
-                        # Make executable
-                        chmod +x "$CLI_EXE"
+                        REM Verify extraction
+                        if exist "%CLI_EXE%" (
+                            echo Installation successful!
+                            "%CLI_EXE%" version
+                        ) else (
+                            echo ERROR: databricks.exe not found after extraction!
+                            echo Contents of %CLI_PATH%:
+                            dir "%CLI_PATH%"
+                            exit /b 1
+                        )
                         
-                        # Verify extraction
-                        if [ -f "$CLI_EXE" ]; then
-                            echo "Installation successful!"
-                            "$CLI_EXE" version
-                        else
-                            echo "ERROR: databricks not found after extraction!"
-                            echo "Contents of $CLI_PATH:"
-                            ls -la "$CLI_PATH"
-                            exit 1
-                        fi
-                        
-                        # Cleanup
-                        rm -f "$ZIP_FILE"
+                        REM Cleanup
+                        del "%ZIP_FILE%"
                     '''
                 }
             }
@@ -88,17 +86,12 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        sh '''#!/bin/bash
-                            set -e
-                            
-                            echo "Setting Databricks environment variables..."
-                            
-                            # Verify credentials are set
-                            echo "DATABRICKS_HOST: ${DATABRICKS_HOST}"
-                            # Show only first 8 chars using bash substring
-                            CLIENT_ID_PREVIEW=$(echo ${DATABRICKS_CLIENT_ID} | cut -c1-8)
-                            echo "DATABRICKS_CLIENT_ID: ${CLIENT_ID_PREVIEW}..."
-                            echo "Authentication configured successfully!"
+                        bat '''
+                            @echo off
+                            echo Setting Databricks environment variables...
+                            echo DATABRICKS_HOST: %DATABRICKS_HOST%
+                            echo DATABRICKS_CLIENT_ID: %DATABRICKS_CLIENT_ID:~0,8%...
+                            echo Authentication configured successfully!
                         '''
                         
                         // Store credentials in environment for subsequent stages
@@ -115,32 +108,33 @@ pipeline {
             steps {
                 script {
                     echo 'Prepending Databricks notebook header to all .py files...'
-                    sh '''#!/bin/bash
-                        HEADER="# Databricks notebook source"
-                        PROCESSED_COUNT=0
-                        SKIPPED_COUNT=0
+                    powershell '''
+                        $header = "# Databricks notebook source"
+                        $processedCount = 0
+                        $skippedCount = 0
                         
-                        echo "Scanning for Python files in: ${WORKSPACE}"
+                        Write-Host "Scanning for Python files in: $env:WORKSPACE"
                         
                         # Find all .py files
-                        find "${WORKSPACE}" -type f -name "*.py" | while read -r file; do
-                            echo "Found: $(basename "$file")"
+                        Get-ChildItem -Path $env:WORKSPACE -Filter "*.py" -Recurse -File | ForEach-Object {
+                            Write-Host "Found: $($_.Name)"
                             
                             # Check if file already has header
-                            if head -n 1 "$file" | grep -q "^# Databricks notebook source"; then
-                                echo "  Already has header"
-                                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-                            else
+                            $firstLine = Get-Content $_.FullName -First 1
+                            if ($firstLine -match "^# Databricks notebook source") {
+                                Write-Host "  Already has header"
+                                $skippedCount++
+                            } else {
                                 # Add header
-                                echo "$HEADER" | cat - "$file" > "${file}.tmp"
-                                mv "${file}.tmp" "$file"
-                                echo "  Added header"
-                                PROCESSED_COUNT=$((PROCESSED_COUNT + 1))
-                            fi
-                        done
+                                $content = Get-Content $_.FullName -Raw
+                                "$header`n$content" | Set-Content $_.FullName
+                                Write-Host "  Added header"
+                                $processedCount++
+                            }
+                        }
                         
-                        echo ""
-                        echo "Processed: $PROCESSED_COUNT | Skipped: $SKIPPED_COUNT"
+                        Write-Host ""
+                        Write-Host "Processed: $processedCount | Skipped: $skippedCount"
                     '''
                 }
             }
@@ -155,23 +149,23 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        sh """#!/bin/bash
-                            set -e
-                            export PATH=\$PATH:${DATABRICKS_CLI_PATH}
-                            export DATABRICKS_HOST=${DATABRICKS_HOST}
-                            export DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
-                            export DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
+                        bat """
+                            @echo off
+                            set PATH=%PATH%;%DATABRICKS_CLI_PATH%
+                            set DATABRICKS_HOST=%DATABRICKS_HOST%
+                            set DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%
+                            set DATABRICKS_CLIENT_SECRET=%DATABRICKS_CLIENT_SECRET%
                             
-                            echo ""
-                            echo "========================================"
-                            echo "Running: databricks bundle validate"
-                            echo "========================================"
-                            echo ""
+                            echo.
+                            echo ========================================
+                            echo Running: databricks bundle validate
+                            echo ========================================
+                            echo.
                             
                             databricks bundle validate
                             
-                            echo ""
-                            echo "Validation completed successfully!"
+                            echo.
+                            echo Validation completed successfully!
                         """
                     }
                 }
@@ -192,24 +186,24 @@ pipeline {
                         string(credentialsId: 'databricks-client-secret', variable: 'DATABRICKS_CLIENT_SECRET'),
                         string(credentialsId: 'databricks-host', variable: 'DATABRICKS_HOST')
                     ]) {
-                        sh """#!/bin/bash
-                            set -e
-                            export PATH=\$PATH:${DATABRICKS_CLI_PATH}
-                            export DATABRICKS_HOST=${DATABRICKS_HOST}
-                            export DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
-                            export DATABRICKS_CLIENT_SECRET=${DATABRICKS_CLIENT_SECRET}
-                            export BUNDLE_VAR_DATABRICKS_CLIENT_ID=${DATABRICKS_CLIENT_ID}
+                        bat """
+                            @echo off
+                            set PATH=%PATH%;%DATABRICKS_CLI_PATH%
+                            set DATABRICKS_HOST=%DATABRICKS_HOST%
+                            set DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%
+                            set DATABRICKS_CLIENT_SECRET=%DATABRICKS_CLIENT_SECRET%
+                            set BUNDLE_VAR_DATABRICKS_CLIENT_ID=%DATABRICKS_CLIENT_ID%
                             
-                            echo ""
-                            echo "========================================"
-                            echo "Running: databricks bundle deploy"
-                            echo "========================================"
-                            echo ""
+                            echo.
+                            echo ========================================
+                            echo Running: databricks bundle deploy
+                            echo ========================================
+                            echo.
                             
                             databricks bundle deploy
                             
-                            echo ""
-                            echo "Deployment completed successfully!"
+                            echo.
+                            echo Deployment completed successfully!
                         """
                     }
                 }
