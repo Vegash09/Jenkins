@@ -55,8 +55,6 @@ resources:
 
 
 
-resources:
-  jobs:
     Job_two:
       name: Job_two
       tasks:
